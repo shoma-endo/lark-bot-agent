@@ -6,7 +6,9 @@
     "dev": "vercel dev",
     "build": "tsc",
     "start": "vercel deploy",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test": "vitest",
+    "test:coverage": "vitest --coverage"
   },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.35.0",
@@ -17,6 +19,8 @@
   "devDependencies": {
     "@types/node": "^22.10.2",
     "typescript": "^5.7.2",
-    "vercel": "^39.2.2"
+    "vercel": "^39.2.2",
+    "vitest": "^2.1.8",
+    "@vitest/coverage-v8": "^2.1.8"
   }
 }

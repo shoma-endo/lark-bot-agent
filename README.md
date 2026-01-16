@@ -35,6 +35,7 @@ LARK_VERIFICATION_TOKEN=xxxxxxxxxxxxxxxxxxxx
 
 # GLM-4.7 API (https://open.bigmodel.cn/ から取得)
 GLM_API_KEY=xxxxxxxxxxxxxxxxxxxx
+GLM_MODEL=glm-4-flash  # モデル選択: glm-4-flash | glm-4-plus | glm-4-0520 | glm-4-air | glm-4
 
 # GitHub (https://github.com/settings/tokens から取得)
 GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
@@ -69,6 +70,22 @@ vercel deploy
 ```
 
 デプロイ後にWebhook URLが表示されます（例: `https://lark-bot-agent-xxxxx.vercel.app`）
+
+### 4.1. Vercel KVの有効化
+
+ジョブキュー機能を使用するために、Vercel KVを有効化する必要があります。
+
+1. Vercelプロジェクトダッシュボードを開く
+2. **Storage** タブ → **Create Database**
+3. **KV** を選択 → **Continue**
+4. リージョンを選択（推奨: `ap-southeast-1` シンガポール）
+5. **Create** をクリック
+
+環境変数が自動的に設定されます:
+- `KV_URL`
+- `KV_REST_API_URL`
+- `KV_REST_API_TOKEN`
+- `KV_REST_API_READ_ONLY_TOKEN`
 
 ### 5. Lark Botの設定
 

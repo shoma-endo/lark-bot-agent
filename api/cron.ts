@@ -6,7 +6,7 @@ import {
   calculateBackoff,
 } from '@/lib/queue/kv';
 import { sendCard } from '@/lib/lark/client';
-import { createCompletedCard, createErrorCard } from '@/lib/lark/cards';
+import { createCompletedCard, createErrorCard, createConflictCard } from '@/lib/lark/cards';
 import { generateCodeWithRetry } from '@/lib/ai/glm';
 import { applyCodeChanges, parseRepoUrl, getRepositoryFiles } from '@/lib/github/client';
 import type { Job } from '@/types';
@@ -104,6 +104,27 @@ async function processJob(job: Job): Promise<void> {
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error(`Job ${job.id} failed:`, errorMessage);
+
+    // Handle merge conflicts specifically (no retry)
+    if (errorMessage.includes('Merge conflicts detected')) {
+      await updateJob(job.id, {
+        status: 'failed',
+        error: errorMessage,
+        completedAt: Date.now(),
+      });
+
+      const failedJob = await updateJob(job.id, {});
+      if (failedJob) {
+        // Extract conflicting files from error message
+        const conflictingFilesMatch = errorMessage.match(/Conflicting files: (.+)/);
+        const conflictingFiles = conflictingFilesMatch
+          ? conflictingFilesMatch[1].split(', ').map(f => f.trim())
+          : ['Unknown files'];
+
+        await sendCard(job.userId, createConflictCard(failedJob, conflictingFiles));
+      }
+      return;
+    }
 
     // Check if we should retry
     const retryCount = await incrementRetryCount(job.id);
