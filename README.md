@@ -27,22 +27,27 @@ Lark → Webhook → Vercel KV ← Cron Worker
 `.env.local` ファイルを作成:
 
 ```bash
-# Lark Bot
+# Lark Bot (Lark Developer Consoleから取得)
 LARK_APP_ID=cli_xxxxxxxxxxxxx
 LARK_APP_SECRET=xxxxxxxxxxxxxxxxxxxx
 LARK_ENCRYPT_KEY=xxxxxxxxxxxxxxxxxxxx
 LARK_VERIFICATION_TOKEN=xxxxxxxxxxxxxxxxxxxx
 
-# GLM-4.7 API
+# GLM-4.7 API (https://open.bigmodel.cn/ から取得)
 GLM_API_KEY=xxxxxxxxxxxxxxxxxxxx
 
-# GitHub
+# GitHub (https://github.com/settings/tokens から取得)
 GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 DEFAULT_REPO_URL=https://github.com/owner/repo
 
-# Vercel KV (自動設定)
+# Vercel KV (自動設定 - Vercelデプロイ時に有効化してください)
 # KV_URL, KV_REST_API_URL, KV_REST_API_TOKEN はVercelが自動設定
 ```
+
+**APIキー取得先:**
+- **Lark**: https://open.larksuite.com/app
+- **GLM-4.7**: https://open.bigmodel.cn/
+- **GitHub**: https://github.com/settings/tokens
 
 ### 2. 依存パッケージのインストール
 
@@ -62,6 +67,37 @@ npm run dev
 npm run build
 vercel deploy
 ```
+
+デプロイ後にWebhook URLが表示されます（例: `https://lark-bot-agent-xxxxx.vercel.app`）
+
+### 5. Lark Botの設定
+
+#### 5.1 Lark Developer Consoleでアプリ作成
+
+1. https://open.larksuite.com/app にアクセス
+2. 「自建应用」を作成
+
+#### 5.2 必要な情報を取得
+
+アプリ設定ページから以下を取得:
+- **App ID**: `LARK_APP_ID` に設定
+- **App Secret**: `LARK_APP_SECRET` に設定
+- **Encrypt Key**: `LARK_ENCRYPT_KEY` に設定
+- **Verification Token**: `LARK_VERIFICATION_TOKEN` に設定
+
+#### 5.3 Webhook URLを設定
+
+イベント → 请求URLに以下を設定:
+
+```
+https://あなたのプロジェクト.vercel.app/api/webhook
+```
+
+#### 5.4 権限を付与
+
+Botに以下の権限を付与:
+- `im:message` (メッセージ送信・受信)
+- `im:message:group_at_msg` (グループメッセージ)
 
 ## APIエンドポイント
 
