@@ -1,9 +1,9 @@
 import type { GLMRequest, GLMResponse, CodeGenerationResponse, Job } from '@/types';
 
-const GLM_API_BASE = 'https://open.bigmodel.cn/api/paas/v4/chat/completions';
+const GLM_API_BASE = 'https://api.z.ai/api/paas/v4/chat/completions';
 
 // GLM-4.7 model (fixed as per requirements)
-const GLM_MODEL = 'glm-4-plus';
+const GLM_MODEL = 'glm-4.7';
 
 // ============================================================================
 // System Prompt
@@ -69,6 +69,7 @@ export async function callGLM(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'Accept-Language': 'en-US,en',
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify(requestBody),
