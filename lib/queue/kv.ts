@@ -22,8 +22,10 @@ export async function createJob(job: Omit<Job, 'id' | 'createdAt'>): Promise<Job
   // Store job data
   await kv.set(`${JOB_PREFIX}${id}`, JSON.stringify(newJob));
 
-  // Add to pending queue (sorted by creation time)
-  await kv.zadd(PENDING_JOBS_KEY, { score: now, member: id });
+  // Add to pending queue only if not questioning
+  if (job.status !== 'questioning') {
+    await kv.zadd(PENDING_JOBS_KEY, { score: now, member: id });
+  }
 
   // Add to user's job history
   await kv.lpush(`${USER_JOBS_PREFIX}${job.userId}`, id);

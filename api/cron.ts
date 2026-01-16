@@ -8,8 +8,8 @@ import {
 import { sendCard } from '@/lib/lark/client';
 import { createCompletedCard, createErrorCard, createConflictCard } from '@/lib/lark/cards';
 import { generateCodeWithRetry } from '@/lib/ai/glm';
-import { applyCodeChanges, parseRepoUrl, getRepositoryFiles } from '@/lib/github/client';
-import type { Job } from '@/types';
+import { applyCodeChanges, updateExistingBranch, parseRepoUrl, getRepositoryFiles } from '@/lib/github/client';
+import type { Job, CodeGenerationResponse } from '@/types';
 
 // ============================================================================
 // Cron Worker Handler
@@ -65,31 +65,46 @@ async function processJob(job: Job): Promise<void> {
   const { owner, repo } = parseRepoUrl(job.context.repoUrl);
 
   try {
-    // Fetch existing files for context
-    const existingFiles = await getRepositoryFiles(owner, repo, job.context.branch);
+    // Check if code changes were pre-generated (from questioning flow)
+    let codeChanges: CodeGenerationResponse;
 
-    // Generate code using GLM-4.7
-    const codeChanges = await generateCodeWithRetry(job.message, {
-      repoUrl: job.context.repoUrl,
-      branch: job.context.branch,
-      files: job.context.files,
-      existingFiles,
-    });
+    if ((job.context as any).codeChanges) {
+      // Use pre-generated code changes
+      codeChanges = (job.context as any).codeChanges;
+    } else {
+      // Fetch existing files for context
+      const existingFiles = await getRepositoryFiles(owner, repo, job.context.branch);
 
-    // Apply changes to GitHub
-    const result = await applyCodeChanges(
-      job.context.repoUrl,
-      codeChanges,
-      job.context.branch
-    );
+      // Generate code using GLM-4.7
+      codeChanges = await generateCodeWithRetry(job.message, {
+        repoUrl: job.context.repoUrl,
+        branch: job.context.branch,
+        files: job.context.files,
+        existingFiles,
+      });
+    }
 
-    // Update job as completed
+    // Apply changes to GitHub (handle both create-pr and update-branch modes)
+    const result = job.context.mode === 'update-branch' && job.context.branch
+      ? await updateExistingBranch(
+          job.context.repoUrl,
+          codeChanges,
+          job.context.branch
+        )
+      : await applyCodeChanges(
+          job.context.repoUrl,
+          codeChanges,
+          job.context.branch
+        );
+
+    // Update job as completed (handle both create-pr and update-branch results)
     await updateJob(job.id, {
       status: 'completed',
       result: {
-        prUrl: result.prUrl,
+        prUrl: result.prUrl || '',
         summary: result.summary,
         branch: result.branch,
+        mode: job.context.mode || 'create-pr',
       },
       completedAt: Date.now(),
     });

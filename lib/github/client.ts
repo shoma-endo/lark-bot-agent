@@ -342,6 +342,112 @@ export async function applyCodeChanges(
 }
 
 // ============================================================================
+// Update Existing Branch Mode
+// ============================================================================
+
+export async function updateExistingBranch(
+  repoUrl: string,
+  changes: CodeGenerationResponse,
+  targetBranchName: string,
+  baseBranch = 'main'
+): Promise<{ prUrl?: string; branch: string; summary: string; commits: number }> {
+  const { owner, repo } = parseRepoUrl(repoUrl);
+
+  // Check if the target branch exists
+  const branchExists_result = await checkBranchExists(owner, repo, targetBranchName);
+  if (!branchExists_result) {
+    throw new Error(`Branch '${targetBranchName}' does not exist. Use 'create-pr' mode for new branches.`);
+  }
+
+  // Get the latest commit SHA of the target branch
+  const { data: ref } = await octokit.rest.git.getRef({
+    owner,
+    repo,
+    ref: `heads/${targetBranchName}`,
+  });
+
+  const latestCommitSha = ref.object.sha;
+
+  // Create or update files
+  await createOrUpdateFiles(owner, repo, targetBranchName, changes.files, changes.commitMessage);
+
+  // Count commits made (compare with previous commit)
+  const { data: newRef } = await octokit.rest.git.getRef({
+    owner,
+    repo,
+    ref: `heads/${targetBranchName}`,
+  });
+
+  const commitsCount = newRef.object.sha !== latestCommitSha ? 1 : 0;
+
+  // Check if a PR already exists for this branch
+  const existingPR = await findPullRequest(owner, repo, targetBranchName, baseBranch);
+
+  let prUrl: string | undefined;
+
+  if (existingPR) {
+    // PR exists, add a comment with the update summary
+    try {
+      await octokit.rest.issues.createComment({
+        owner,
+        repo,
+        issue_number: existingPR.number,
+        body: `## 🔧 更新内容\n\n${changes.prBody}\n\n---\n\n*更新時刻: ${new Date().toLocaleString('ja-JP')}*`,
+      });
+
+      prUrl = existingPR.html_url;
+    } catch {
+      // If commenting fails, we still have the PR URL
+      prUrl = existingPR.html_url;
+    }
+  } else {
+    // No PR exists, create a new one
+    const pr = await createPullRequest(
+      owner,
+      repo,
+      changes.prTitle,
+      `${changes.prBody}\n\n---\n\n**ブランチ:** ${targetBranchName}`,
+      targetBranchName,
+      baseBranch
+    );
+
+    prUrl = pr.html_url;
+  }
+
+  return {
+    prUrl,
+    branch: targetBranchName,
+    summary: changes.plan,
+    commits: commitsCount,
+  };
+}
+
+// Helper function to find an existing PR for a branch
+async function findPullRequest(
+  owner: string,
+  repo: string,
+  head: string,
+  base = 'main'
+): Promise<{ html_url: string; number: number } | null> {
+  const { data: prs } = await octokit.rest.pulls.list({
+    owner,
+    repo,
+    state: 'open',
+    head: `${owner}:${head}`,
+    base,
+    per_page: 1,
+  });
+
+  if (prs.length > 0) {
+    return { html_url: prs[0].html_url, number: prs[0].number };
+  }
+
+  return null;
+}
+
+export { findPullRequest as _findPullRequest };
+
+// ============================================================================
 // Repository Info
 // ============================================================================
 

@@ -5,6 +5,10 @@ import type { LarkCard, LarkCardElement, Job } from '@/types';
 // ============================================================================
 
 export function createProcessingCard(job: Job): LarkCard {
+  const modeText = job.context.mode === 'update-branch'
+    ? `**モード:** 既存ブランチ更新\n\n**対象ブランチ:** \`${job.context.branch || 'main'}\``
+    : `**モード:** 新規PR作成`;
+
   return {
     msg_type: 'interactive',
     card: {
@@ -17,7 +21,7 @@ export function createProcessingCard(job: Job): LarkCard {
           tag: 'div',
           text: {
             tag: 'lark_md',
-            content: `**指示:** ${job.message}\n\n**ステータス:** 処理中...\n\n⏳ 推定所要時間: 1-3分`,
+            content: `**指示:** ${job.message}\n\n${modeText}\n\n**ステータス:** 処理中...\n\n⏳ 推定所要時間: 1-3分`,
           },
         },
         {
@@ -41,6 +45,12 @@ export function createCompletedCard(job: Job): LarkCard {
     throw new Error('Job result is required for completed card');
   }
 
+  const modeText = job.result.mode === 'update-branch'
+    ? `**モード:** 既存ブランチ更新\n\n**対象ブランチ:** \`${job.result.branch}\``
+    : `**モード:** 新規PR作成`;
+
+  const hasPR = !!job.result.prUrl;
+
   return {
     msg_type: 'interactive',
     card: {
@@ -53,10 +63,12 @@ export function createCompletedCard(job: Job): LarkCard {
           tag: 'div',
           text: {
             tag: 'lark_md',
-            content: `**PR:** ${job.result.prUrl}\n\n**変更内容:**\n${job.result.summary}\n\n**反映ブランチ:** ${job.result.branch}`,
+            content: `${modeText}\n\n**変更内容:**\n${job.result.summary}${
+              hasPR ? `\n\n**PR:** ${job.result.prUrl}` : '\n\n**ブランチ:** コミット完了'
+            }`,
           },
         },
-        {
+        hasPR ? {
           tag: 'action',
           actions: [
             {
@@ -65,6 +77,11 @@ export function createCompletedCard(job: Job): LarkCard {
               type: 'primary',
               url: job.result.prUrl,
             },
+          ],
+        } : null,
+        {
+          tag: 'action',
+          actions: [
             {
               tag: 'button',
               text: { tag: 'plain_text', content: '🔄 再実行' },
@@ -72,7 +89,7 @@ export function createCompletedCard(job: Job): LarkCard {
             },
           ],
         },
-      ],
+      ].filter((el): el is LarkCardElement => el !== null),
     },
   };
 }
@@ -115,6 +132,7 @@ export function createErrorCard(
 export function createStatusCard(job: Job): LarkCard {
   const statusEmoji = {
     pending: '⏳',
+    questioning: '❓',
     processing: '🔄',
     completed: '✅',
     failed: '❌',
@@ -196,6 +214,46 @@ export function createConflictCard(
   };
 }
 
+export function createQuestionsCard(job: Job): LarkCard {
+  if (!job.questions || job.questions.length === 0) {
+    throw new Error('Job questions are required for questions card');
+  }
+
+  const questionsList = job.questions
+    .map((q, i) => `${i + 1}. ${q.text}${q.answer ? `\n   → 回答: ${q.answer}` : ''}`)
+    .join('\n\n');
+
+  return {
+    msg_type: 'interactive',
+    card: {
+      header: {
+        title: { tag: 'plain_text', content: '❓ 確認させてください' },
+        template: 'yellow',
+      },
+      elements: [
+        {
+          tag: 'div',
+          text: {
+            tag: 'lark_md',
+            content: `**指示:** ${job.message}\n\n**以下の点について確認させてください:**\n\n${questionsList}\n\n💡 このスレッド内で回答をお願いします`,
+          },
+        },
+        {
+          tag: 'action',
+          actions: [
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '📊 ステータス確認' },
+              type: 'default',
+              value: { type: 'check_status', job_id: job.id },
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
 export function createWelcomeCard(): LarkCard {
   return {
     msg_type: 'interactive',
@@ -216,9 +274,14 @@ export function createWelcomeCard(): LarkCard {
 2. AIがコードを生成・編集してPRを作成
 3. 完了したら通知が届きます
 
+**モード:**
+• **新規PR作成**（デフォルト）: 新しいブランチとPRを作成
+• **既存ブランチ更新**: 既存ブランチにコミットを追加
+
 **例:**
 - 「src/utils.ts に日付フォーマット関数を追加して」
 - 「README.md を更新して、インストール手順を追加して」
+- 「branch: feature-auth 認証ロジックを修正して」← 既存ブランチを更新
 - 「バグを修正: ユーザー認証が正しく動かない問題」`,
           },
         },
