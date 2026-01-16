@@ -10,35 +10,6 @@ describe('GLM AI', () => {
     vi.clearAllMocks();
     // Set required environment variables
     process.env.GLM_API_KEY = 'test-api-key';
-    process.env.GLM_MODEL = 'glm-4-flash';
-  });
-
-  describe('getGLMModel', () => {
-    it('should return model from environment variable', async () => {
-      const { getGLMModel } = await import('@/lib/ai/glm');
-
-      expect(getGLMModel()).toBe('glm-4-flash');
-    });
-
-    it('should return default model when environment variable is not set', async () => {
-      delete process.env.GLM_MODEL;
-      const { getGLMModel } = await import('@/lib/ai/glm');
-
-      expect(getGLMModel()).toBe('glm-4-flash');
-    });
-
-    it('should fall back to default for unknown model', async () => {
-      process.env.GLM_MODEL = 'unknown-model';
-      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      const { getGLMModel } = await import('@/lib/ai/glm');
-
-      expect(getGLMModel()).toBe('glm-4-flash');
-      expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Unknown GLM model')
-      );
-
-      consoleSpy.mockRestore();
-    });
   });
 
   describe('parseCodeGenerationResponse', () => {

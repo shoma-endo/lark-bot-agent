@@ -35,7 +35,6 @@ LARK_VERIFICATION_TOKEN=xxxxxxxxxxxxxxxxxxxx
 
 # GLM-4.7 API (https://open.bigmodel.cn/ から取得)
 GLM_API_KEY=xxxxxxxxxxxxxxxxxxxx
-GLM_MODEL=glm-4-flash  # モデル選択: glm-4-flash | glm-4-plus | glm-4-0520 | glm-4-air | glm-4
 
 # GitHub (https://github.com/settings/tokens から取得)
 GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxx

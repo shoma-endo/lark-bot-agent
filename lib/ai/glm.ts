@@ -2,26 +2,8 @@ import type { GLMRequest, GLMResponse, CodeGenerationResponse, Job } from '@/typ
 
 const GLM_API_BASE = 'https://open.bigmodel.cn/api/paas/v4/chat/completions';
 
-// Available GLM models
-const GLM_MODELS = {
-  'glm-4-flash': 'glm-4-flash',      // 高速・低コスト
-  'glm-4-plus': 'glm-4-plus',        // 高品質
-  'glm-4-0520': 'glm-4-0520',        // 最新版
-  'glm-4-air': 'glm-4-air',          // 軽量版
-  'glm-4': 'glm-4',                  // 標準版
-} as const;
-
-type GLMModel = keyof typeof GLM_MODELS;
-
-// Get model from environment variable or use default
-export function getGLMModel(): string {
-  const model = process.env.GLM_MODEL || 'glm-4-flash';
-  if (!(model in GLM_MODELS)) {
-    console.warn(`Unknown GLM model: ${model}, falling back to glm-4-flash`);
-    return 'glm-4-flash';
-  }
-  return model;
-}
+// GLM-4.7 model (fixed as per requirements)
+const GLM_MODEL = 'glm-4-plus';
 
 // ============================================================================
 // System Prompt
@@ -77,7 +59,7 @@ export async function callGLM(
   }
 
   const requestBody: GLMRequest = {
-    model: getGLMModel(),
+    model: GLM_MODEL,
     messages,
     temperature: options.temperature ?? 0.7,
     max_tokens: options.maxTokens ?? 8192,
