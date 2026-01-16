@@ -8,7 +8,7 @@ import {
 import { sendCard } from '@/lib/lark/client';
 import { createCompletedCard, createErrorCard, createConflictCard } from '@/lib/lark/cards';
 import { generateCodeWithRetry } from '@/lib/ai/glm';
-import { applyCodeChanges, parseRepoUrl, getRepositoryFiles } from '@/lib/github/client';
+import { applyCodeChanges, updateExistingBranch, parseRepoUrl, getRepositoryFiles } from '@/lib/github/client';
 import type { Job } from '@/types';
 
 // ============================================================================
@@ -76,20 +76,27 @@ async function processJob(job: Job): Promise<void> {
       existingFiles,
     });
 
-    // Apply changes to GitHub
-    const result = await applyCodeChanges(
-      job.context.repoUrl,
-      codeChanges,
-      job.context.branch
-    );
+    // Apply changes to GitHub (handle both create-pr and update-branch modes)
+    const result = job.context.mode === 'update-branch' && job.context.branch
+      ? await updateExistingBranch(
+          job.context.repoUrl,
+          codeChanges,
+          job.context.branch
+        )
+      : await applyCodeChanges(
+          job.context.repoUrl,
+          codeChanges,
+          job.context.branch
+        );
 
-    // Update job as completed
+    // Update job as completed (handle both create-pr and update-branch results)
     await updateJob(job.id, {
       status: 'completed',
       result: {
-        prUrl: result.prUrl,
+        prUrl: result.prUrl || '',
         summary: result.summary,
         branch: result.branch,
+        mode: job.context.mode || 'create-pr',
       },
       completedAt: Date.now(),
     });

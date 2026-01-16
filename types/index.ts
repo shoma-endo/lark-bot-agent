@@ -9,12 +9,14 @@ export interface JobContext {
   branch?: string;
   files?: string[];
   existingFiles?: Record<string, string>;
+  mode?: 'create-pr' | 'update-branch';
 }
 
 export interface JobResult {
   prUrl: string;
   summary: string;
   branch: string;
+  mode?: 'create-pr' | 'update-branch';
 }
 
 export interface Job {

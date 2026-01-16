@@ -95,4 +95,36 @@ describe('GitHub Client', () => {
       expect(shouldIncludeFile('data.pdf')).toBe(false);
     });
   });
+
+  describe('branchExists', () => {
+    it('should be exported function', async () => {
+      const { branchExists } = await import('@/lib/github/client');
+
+      expect(typeof branchExists).toBe('function');
+    });
+  });
+
+  describe('updateExistingBranch', () => {
+    it('should be exported function', async () => {
+      const { updateExistingBranch } = await import('@/lib/github/client');
+
+      expect(typeof updateExistingBranch).toBe('function');
+    });
+
+    it('should have 3 required parameters', async () => {
+      const { updateExistingBranch } = await import('@/lib/github/client');
+
+      // Function signature: (repoUrl, changes, targetBranchName, baseBranch?)
+      // JavaScript function.length counts only required parameters
+      expect(updateExistingBranch.length).toBe(3);
+    });
+  });
+
+  describe('findPullRequest', () => {
+    it('should export _findPullRequest helper', async () => {
+      const { _findPullRequest } = await import('@/lib/github/client');
+
+      expect(typeof _findPullRequest).toBe('function');
+    });
+  });
 });

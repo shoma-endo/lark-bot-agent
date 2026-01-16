@@ -37,16 +37,29 @@ export async function POST(request: Request): Promise<Response> {
       return new Response('Welcome card sent', { status: 200 });
     }
 
+    // Parse branch specification (e.g., "branch: feature-xxx タスク内容")
+    const branchMatch = content.match(/^branch:\s*(\S+)\s+(.+)/i);
+    let targetMessage = content;
+    let targetBranch: string | undefined;
+    let mode: 'create-pr' | 'update-branch' = 'create-pr';
+
+    if (branchMatch) {
+      targetBranch = branchMatch[1];
+      targetMessage = branchMatch[2];
+      mode = 'update-branch';
+    }
+
     // Default repo URL (can be configured via env or user settings)
     const defaultRepoUrl = process.env.DEFAULT_REPO_URL || 'https://github.com/shoma-endo/lark-bot-agent';
 
     // Create job
     const job = await createJob({
       userId,
-      message: content,
+      message: targetMessage,
       context: {
         repoUrl: defaultRepoUrl,
-        branch: 'main',
+        branch: targetBranch || 'main',
+        mode,
       },
       status: 'pending',
     });
