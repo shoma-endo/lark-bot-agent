@@ -64,6 +64,8 @@ export function parseUserMessage(event: LarkWebhookEvent): {
   userId: string;
   chatId: string;
   content: string;
+  parentMessageId?: string;
+  rootMessageId?: string;
 } | null {
   try {
     const evt = event.event;
@@ -83,11 +85,33 @@ export function parseUserMessage(event: LarkWebhookEvent): {
       userId: operator.user_id,
       chatId: message.chat_id,
       content: contentJson.text || '',
+      parentMessageId: message.parent_id,
+      rootMessageId: message.root_id,
     };
   } catch (error) {
     console.error('Failed to parse user message:', error);
     return null;
   }
+}
+
+// ============================================================================
+// Thread Reply
+// ============================================================================
+
+export async function replyToThread(
+  chatId: string,
+  parentMessageId: string,
+  cardContent: LarkCard
+): Promise<void> {
+  await client.im.message.create({
+    data: {
+      receive_id: chatId,
+      msg_type: 'interactive',
+      content: JSON.stringify(cardContent),
+      reply_in_thread: true,
+      root_id: parentMessageId,
+    },
+  });
 }
 
 export default client;

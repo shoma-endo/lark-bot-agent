@@ -132,6 +132,7 @@ export function createErrorCard(
 export function createStatusCard(job: Job): LarkCard {
   const statusEmoji = {
     pending: '⏳',
+    questioning: '❓',
     processing: '🔄',
     completed: '✅',
     failed: '❌',
@@ -205,6 +206,46 @@ export function createConflictCard(
               tag: 'button',
               text: { tag: 'plain_text', content: '🔄 再実行' },
               value: { type: 'retry', job_id: job.id },
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+export function createQuestionsCard(job: Job): LarkCard {
+  if (!job.questions || job.questions.length === 0) {
+    throw new Error('Job questions are required for questions card');
+  }
+
+  const questionsList = job.questions
+    .map((q, i) => `${i + 1}. ${q.text}${q.answer ? `\n   → 回答: ${q.answer}` : ''}`)
+    .join('\n\n');
+
+  return {
+    msg_type: 'interactive',
+    card: {
+      header: {
+        title: { tag: 'plain_text', content: '❓ 確認させてください' },
+        template: 'yellow',
+      },
+      elements: [
+        {
+          tag: 'div',
+          text: {
+            tag: 'lark_md',
+            content: `**指示:** ${job.message}\n\n**以下の点について確認させてください:**\n\n${questionsList}\n\n💡 このスレッド内で回答をお願いします`,
+          },
+        },
+        {
+          tag: 'action',
+          actions: [
+            {
+              tag: 'button',
+              text: { tag: 'plain_text', content: '📊 ステータス確認' },
+              type: 'default',
+              value: { type: 'check_status', job_id: job.id },
             },
           ],
         },

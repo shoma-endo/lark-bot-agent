@@ -2,7 +2,14 @@
 // Job Queue Types
 // ============================================================================
 
-export type JobStatus = 'pending' | 'processing' | 'completed' | 'failed';
+export type JobStatus = 'pending' | 'questioning' | 'processing' | 'completed' | 'failed';
+
+export interface Question {
+  id: string;
+  text: string;
+  answer?: string;
+  askedAt: number;
+}
 
 export interface JobContext {
   repoUrl: string;
@@ -31,6 +38,9 @@ export interface Job {
   completedAt?: number;
   error?: string;
   retryCount?: number;
+  questions?: Question[];
+  threadId?: string;
+  parentMessageId?: string;
 }
 
 // ============================================================================
@@ -145,6 +155,15 @@ export interface CodeGenerationResponse {
   commitMessage: string;
   prTitle: string;
   prBody: string;
+}
+
+export interface QuestioningResponse {
+  needsQuestions: boolean;
+  questions?: Array<{
+    id: string;
+    text: string;
+  }>;
+  codeChanges?: CodeGenerationResponse;
 }
 
 // ============================================================================
