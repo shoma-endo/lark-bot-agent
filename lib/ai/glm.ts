@@ -1,6 +1,11 @@
 import type { GLMRequest, GLMResponse, CodeGenerationResponse, Job, QuestioningResponse, Question } from '@/types';
-import { GLMApiError, GLMConfigError, GLMParseError } from '@/lib/errors';
+import { GLMApiError, GLMConfigError, GLMParseError, RateLimitError } from '@/lib/errors';
 import { CodeGenerationResponseSchema, QuestioningResponseSchema } from '@/lib/validation/schemas';
+import {
+  checkGLMRateLimit,
+  recordGLMSuccess,
+  recordGLMRateLimitError,
+} from '@/lib/rate-limit';
 
 const GLM_API_BASE = 'https://api.z.ai/api/paas/v4/chat/completions';
 
@@ -110,6 +115,9 @@ export async function callGLM(
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
   options: { temperature?: number; maxTokens?: number } = {}
 ): Promise<GLMResponse> {
+  // Check rate limit before making request
+  checkGLMRateLimit();
+
   const apiKey = process.env.GLM_API_KEY;
   if (!apiKey) {
     throw new GLMConfigError();
@@ -143,12 +151,23 @@ export async function callGLM(
 
   if (!response.ok) {
     const errorText = await response.text();
+
+    // Handle rate limit errors (429)
+    if (response.status === 429) {
+      recordGLMRateLimitError();
+      const retryAfter = response.headers.get('retry-after');
+      throw new RateLimitError('glm', retryAfter ? parseInt(retryAfter, 10) : undefined);
+    }
+
     throw new GLMApiError(
       `GLM API error: ${errorText}`,
       response.status,
       { endpoint: GLM_API_BASE }
     );
   }
+
+  // Record successful request
+  recordGLMSuccess();
 
   return (await response.json()) as GLMResponse;
 }

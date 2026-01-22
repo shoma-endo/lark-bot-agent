@@ -5,13 +5,62 @@ import {
   InvalidRepoUrlError,
   BranchNotFoundError,
   MergeConflictError,
+  RateLimitError,
 } from '@/lib/errors';
 import { GitHubRepoUrlSchema, BranchNameSchema, FilePathSchema } from '@/lib/validation/schemas';
+import {
+  updateGitHubRateLimit,
+  checkGitHubRateLimit,
+  getGitHubRateLimitState,
+} from '@/lib/rate-limit';
 
-// Initialize GitHub client
+// Initialize GitHub client with rate limit tracking
 const octokit = new Octokit({
   auth: process.env.GITHUB_TOKEN,
 });
+
+// Hook to track rate limits from response headers
+octokit.hook.after('request', async (response) => {
+  if (response.headers) {
+    // Convert Octokit headers to standard Headers format
+    const headers = new Headers();
+    const rateLimitRemaining = response.headers['x-ratelimit-remaining'];
+    const rateLimitLimit = response.headers['x-ratelimit-limit'];
+    const rateLimitReset = response.headers['x-ratelimit-reset'];
+
+    if (rateLimitRemaining) headers.set('x-ratelimit-remaining', String(rateLimitRemaining));
+    if (rateLimitLimit) headers.set('x-ratelimit-limit', String(rateLimitLimit));
+    if (rateLimitReset) headers.set('x-ratelimit-reset', String(rateLimitReset));
+
+    updateGitHubRateLimit(headers);
+  }
+});
+
+// Hook to check for rate limit errors
+octokit.hook.error('request', async (error) => {
+  // Check if error has status property (RequestError from Octokit)
+  const status = 'status' in error ? (error as { status: number }).status : undefined;
+  if (status === 403 || status === 429) {
+    const response = 'response' in error ? (error as { response?: { headers?: Record<string, string> } }).response : undefined;
+    const retryAfter = response?.headers?.['retry-after'];
+    throw new RateLimitError('github', retryAfter ? parseInt(retryAfter, 10) : undefined);
+  }
+  throw error;
+});
+
+/**
+ * Check GitHub rate limit before making requests
+ */
+export function ensureGitHubRateLimit(): void {
+  checkGitHubRateLimit();
+}
+
+/**
+ * Get current GitHub rate limit info
+ */
+export function getGitHubRateLimit() {
+  return getGitHubRateLimitState();
+}
 
 // ============================================================================
 // Repository Parsing

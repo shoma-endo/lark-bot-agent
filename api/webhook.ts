@@ -16,19 +16,24 @@ import {
   AppError,
   formatErrorResponse,
 } from '@/lib/errors';
+import { webhookLogger, generateRequestId, logError, createTimer } from '@/lib/logger';
 
 // ============================================================================
 // Webhook Handler
 // ============================================================================
 
 export async function POST(request: Request): Promise<Response> {
+  const requestId = generateRequestId();
+  const timer = createTimer('webhook-request', webhookLogger);
+  const log = webhookLogger.child({ requestId });
+
   try {
     // Parse and validate webhook event
     const rawEvent = await request.json();
     const eventResult = LarkWebhookEventSchema.safeParse(rawEvent);
 
     if (!eventResult.success) {
-      console.error('Webhook validation failed:', eventResult.error.issues);
+      log.warn({ issues: eventResult.error.issues }, 'Webhook validation failed');
       throw new ValidationError(
         'Webhook イベントの検証に失敗しました',
         eventResult.error.issues.map((issue) => ({
@@ -209,7 +214,7 @@ export async function POST(request: Request): Promise<Response> {
       try {
         existingFiles = await getRepositoryFiles(owner, repo, targetBranch || 'main', 10);
       } catch (e) {
-        console.error('Failed to fetch repository files:', e);
+        log.warn({ error: e, owner, repo }, 'Failed to fetch repository files');
       }
     }
 
@@ -269,16 +274,23 @@ export async function POST(request: Request): Promise<Response> {
     // Send processing card to the chat
     await sendCard(chatId, createProcessingCard(job));
 
+    log.info({ jobId: job.id }, 'Job created successfully');
+    timer.end({ jobId: job.id, status: 'created' });
     return new Response('Job created', { status: 200 });
   } catch (error) {
-    console.error('Webhook error:', error);
+    // Log error with context
+    if (error instanceof Error) {
+      logError(log, error, { requestId });
+    }
 
     // Handle known error types
     if (error instanceof AppError) {
+      timer.endWithLevel('warn', { error: error.code });
       return Response.json(formatErrorResponse(error), { status: error.statusCode });
     }
 
     // Unknown error
+    timer.endWithLevel('error', { error: 'unknown' });
     return new Response('Internal Server Error', { status: 500 });
   }
 }
