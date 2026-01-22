@@ -4,9 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "vercel dev",
-    "build": "tsc",
+    "build": "npx tsc",
     "start": "vercel deploy",
-    "type-check": "tsc --noEmit",
+    "type-check": "npx tsc --noEmit",
     "test": "vitest",
     "test:coverage": "vitest --coverage"
   },
