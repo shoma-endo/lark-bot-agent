@@ -4,9 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "vercel dev",
-    "build": "npx tsc",
+    "build": "tsc",
     "start": "vercel deploy",
-    "type-check": "npx tsc --noEmit",
+    "type-check": "tsc --noEmit",
     "test": "vitest",
     "test:coverage": "vitest --coverage"
   },
@@ -16,11 +16,11 @@
     "ai": "^4.1.1",
     "octokit": "^4.0.2",
     "pino": "^9.6.0",
+    "typescript": "^5.7.2",
     "zod": "^3.24.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
-    "typescript": "^5.7.2",
     "vercel": "^39.2.2",
     "vitest": "^2.1.8",
     "@vitest/coverage-v8": "^2.1.8"
