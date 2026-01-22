@@ -104,13 +104,12 @@ export async function replyToThread(
   cardContent: LarkCard
 ): Promise<void> {
   await client.im.message.create({
+    params: { receive_id_type: getReceiveIdType(chatId) },
     data: {
       receive_id: chatId,
       msg_type: 'interactive',
       content: JSON.stringify(cardContent),
-      reply_in_thread: true,
-      root_id: parentMessageId,
-    },
+    } as { receive_id: string; msg_type: string; content: string; uuid?: string },
   });
 }
 

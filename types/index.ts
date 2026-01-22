@@ -55,7 +55,7 @@ export interface LarkMessage {
 }
 
 export interface LarkWebhookEvent {
-  schema: string;
+  schema?: string;
   header: {
     event_id: string;
     timestamp: string;
@@ -74,6 +74,8 @@ export interface LarkWebhookEvent {
       chat_id: string;
       chat_type: string;
       content: string;
+      parent_id?: string;
+      root_id?: string;
     };
     challenge?: string;
     action?: {
