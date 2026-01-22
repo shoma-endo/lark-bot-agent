@@ -1,4 +1,11 @@
 import type { GLMRequest, GLMResponse, CodeGenerationResponse, Job, QuestioningResponse, Question } from '@/types';
+import { GLMApiError, GLMConfigError, GLMParseError, RateLimitError } from '@/lib/errors';
+import { CodeGenerationResponseSchema, QuestioningResponseSchema } from '@/lib/validation/schemas';
+import {
+  checkGLMRateLimit,
+  recordGLMSuccess,
+  recordGLMRateLimitError,
+} from '@/lib/rate-limit';
 
 const GLM_API_BASE = 'https://api.z.ai/api/paas/v4/chat/completions';
 
@@ -108,9 +115,12 @@ export async function callGLM(
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
   options: { temperature?: number; maxTokens?: number } = {}
 ): Promise<GLMResponse> {
+  // Check rate limit before making request
+  checkGLMRateLimit();
+
   const apiKey = process.env.GLM_API_KEY;
   if (!apiKey) {
-    throw new Error('GLM_API_KEY is not set');
+    throw new GLMConfigError();
   }
 
   const requestBody: GLMRequest = {
@@ -120,20 +130,44 @@ export async function callGLM(
     max_tokens: options.maxTokens ?? 8192,
   };
 
-  const response = await fetch(GLM_API_BASE, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept-Language': 'en-US,en',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(requestBody),
-  });
+  let response: Response;
+  try {
+    response = await fetch(GLM_API_BASE, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept-Language': 'en-US,en',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(requestBody),
+    });
+  } catch (error) {
+    throw new GLMApiError(
+      `GLM APIへの接続に失敗しました: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      undefined,
+      { endpoint: GLM_API_BASE }
+    );
+  }
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`GLM API error: ${response.status} ${errorText}`);
+
+    // Handle rate limit errors (429)
+    if (response.status === 429) {
+      recordGLMRateLimitError();
+      const retryAfter = response.headers.get('retry-after');
+      throw new RateLimitError('glm', retryAfter ? parseInt(retryAfter, 10) : undefined);
+    }
+
+    throw new GLMApiError(
+      `GLM API error: ${errorText}`,
+      response.status,
+      { endpoint: GLM_API_BASE }
+    );
   }
+
+  // Record successful request
+  recordGLMSuccess();
 
   return (await response.json()) as GLMResponse;
 }
@@ -203,54 +237,25 @@ export function parseCodeGenerationResponse(content: string): CodeGenerationResp
     }
   }
 
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(jsonStr);
-
-    // Validate required fields
-    if (!parsed.plan || typeof parsed.plan !== 'string') {
-      throw new Error('Missing or invalid "plan" field');
-    }
-
-    if (!Array.isArray(parsed.files) || parsed.files.length === 0) {
-      throw new Error('Missing or empty "files" array');
-    }
-
-    for (const file of parsed.files) {
-      if (!file.path || typeof file.path !== 'string') {
-        throw new Error('Each file must have a "path" string');
-      }
-      if (file.content === undefined || typeof file.content !== 'string') {
-        throw new Error(`File "${file.path}" is missing "content"`);
-      }
-    }
-
-    if (!parsed.commitMessage || typeof parsed.commitMessage !== 'string') {
-      parsed.commitMessage = 'chore: update files';
-    }
-
-    if (!parsed.prTitle || typeof parsed.prTitle !== 'string') {
-      parsed.prTitle = parsed.plan.slice(0, 50);
-    }
-
-    if (!parsed.prBody || typeof parsed.prBody !== 'string') {
-      parsed.prBody = parsed.plan;
-    }
-
-    return {
-      plan: parsed.plan,
-      files: parsed.files,
-      commitMessage: parsed.commitMessage,
-      prTitle: parsed.prTitle,
-      prBody: parsed.prBody,
-    };
+    parsed = JSON.parse(jsonStr);
   } catch (error) {
-    console.error('Failed to parse GLM response:', error);
-    console.error('Response content:', content);
+    console.error('Failed to parse JSON from GLM response:', error);
+    throw new GLMParseError('JSONの解析に失敗しました', content);
+  }
 
-    throw new Error(
-      `AI応答の解析に失敗しました: ${error instanceof Error ? error.message : 'Unknown error'}`
+  // Validate with zod schema
+  const result = CodeGenerationResponseSchema.safeParse(parsed);
+  if (!result.success) {
+    console.error('GLM response validation failed:', result.error.issues);
+    throw new GLMParseError(
+      result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', '),
+      content
     );
   }
+
+  return result.data;
 }
 
 // ============================================================================
@@ -262,7 +267,7 @@ export async function generateCodeWithRetry(
   context: Job['context'],
   maxRetries = 3
 ): Promise<CodeGenerationResponse> {
-  let lastError: Error | null = null;
+  let lastError: GLMApiError | GLMParseError | null = null;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
@@ -273,7 +278,15 @@ export async function generateCodeWithRetry(
         existingCode: context.existingFiles,
       });
     } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
+      if (error instanceof GLMApiError || error instanceof GLMParseError) {
+        lastError = error;
+      } else {
+        lastError = new GLMApiError(
+          error instanceof Error ? error.message : String(error),
+          undefined,
+          { attempt }
+        );
+      }
       console.error(`GLM attempt ${attempt} failed:`, lastError.message);
 
       if (attempt < maxRetries) {
@@ -284,7 +297,7 @@ export async function generateCodeWithRetry(
     }
   }
 
-  throw lastError || new Error('All GLM retry attempts failed');
+  throw lastError || new GLMApiError('All GLM retry attempts failed');
 }
 
 // ============================================================================
@@ -345,79 +358,25 @@ export function parseQuestioningResponse(content: string): QuestioningResponse {
     }
   }
 
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(jsonStr);
-
-    // Validate needsQuestions field
-    if (typeof parsed.needsQuestions !== 'boolean') {
-      throw new Error('Missing or invalid "needsQuestions" field');
-    }
-
-    // If needs questions
-    if (parsed.needsQuestions) {
-      if (!Array.isArray(parsed.questions) || parsed.questions.length === 0) {
-        throw new Error('needsQuestions is true but questions array is missing or empty');
-      }
-      if (parsed.questions.length > 3) {
-        // Limit to 3 questions
-        parsed.questions = parsed.questions.slice(0, 3);
-      }
-      for (const q of parsed.questions) {
-        if (!q.id || typeof q.id !== 'string') {
-          throw new Error('Each question must have an "id" string');
-        }
-        if (!q.text || typeof q.text !== 'string') {
-          throw new Error(`Question "${q.id}" is missing "text"`);
-        }
-      }
-      return {
-        needsQuestions: true,
-        questions: parsed.questions,
-      };
-    }
-
-    // If no questions, validate codeChanges
-    if (!parsed.codeChanges) {
-      throw new Error('needsQuestions is false but codeChanges is missing');
-    }
-
-    const codeChanges = parsed.codeChanges;
-    if (!codeChanges.plan || typeof codeChanges.plan !== 'string') {
-      throw new Error('Missing or invalid "plan" field in codeChanges');
-    }
-    if (!Array.isArray(codeChanges.files) || codeChanges.files.length === 0) {
-      throw new Error('Missing or empty "files" array in codeChanges');
-    }
-    for (const file of codeChanges.files) {
-      if (!file.path || typeof file.path !== 'string') {
-        throw new Error('Each file must have a "path" string');
-      }
-      if (file.content === undefined || typeof file.content !== 'string') {
-        throw new Error(`File "${file.path}" is missing "content"`);
-      }
-    }
-    if (!codeChanges.commitMessage || typeof codeChanges.commitMessage !== 'string') {
-      codeChanges.commitMessage = 'chore: update files';
-    }
-    if (!codeChanges.prTitle || typeof codeChanges.prTitle !== 'string') {
-      codeChanges.prTitle = codeChanges.plan.slice(0, 50);
-    }
-    if (!codeChanges.prBody || typeof codeChanges.prBody !== 'string') {
-      codeChanges.prBody = codeChanges.plan;
-    }
-
-    return {
-      needsQuestions: false,
-      codeChanges,
-    };
+    parsed = JSON.parse(jsonStr);
   } catch (error) {
-    console.error('Failed to parse questioning response:', error);
-    console.error('Response content:', content);
+    console.error('Failed to parse JSON from questioning response:', error);
+    throw new GLMParseError('JSONの解析に失敗しました', content);
+  }
 
-    throw new Error(
-      `AI応答の解析に失敗しました: ${error instanceof Error ? error.message : 'Unknown error'}`
+  // Validate with zod schema
+  const result = QuestioningResponseSchema.safeParse(parsed);
+  if (!result.success) {
+    console.error('Questioning response validation failed:', result.error.issues);
+    throw new GLMParseError(
+      result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', '),
+      content
     );
   }
+
+  return result.data;
 }
 
 export async function processUserAnswers(

@@ -1,21 +1,54 @@
-import type { LarkWebhookEvent, Question } from '@/types';
+import type { Question, LarkWebhookEvent } from '@/types';
 import { createJob, getJob, getUserJobs, updateJob } from '@/lib/queue/kv';
 import { verifyWebhook, parseUserMessage, sendCard, replyToThread } from '@/lib/lark/client';
 import { createProcessingCard, createWelcomeCard, createQuestionsCard } from '@/lib/lark/cards';
 import { analyzeAndGenerate, processUserAnswers } from '@/lib/ai/glm';
 import { getRepositoryFiles } from '@/lib/github/client';
+import {
+  LarkWebhookEventSchema,
+  UserMessageSchema,
+  BranchSpecificationSchema,
+  GitHubRepoUrlSchema,
+} from '@/lib/validation/schemas';
+import {
+  ValidationError,
+  LarkWebhookError,
+  AppError,
+  formatErrorResponse,
+} from '@/lib/errors';
+import { webhookLogger, generateRequestId, logError, createTimer } from '@/lib/logger';
 
 // ============================================================================
 // Webhook Handler
 // ============================================================================
 
 export async function POST(request: Request): Promise<Response> {
+  const requestId = generateRequestId();
+  const timer = createTimer('webhook-request', webhookLogger);
+  const log = webhookLogger.child({ requestId });
+
   try {
-    const event = (await request.json()) as LarkWebhookEvent;
+    // Parse and validate webhook event
+    const rawEvent = await request.json();
+    const eventResult = LarkWebhookEventSchema.safeParse(rawEvent);
+
+    if (!eventResult.success) {
+      log.warn({ issues: eventResult.error.issues }, 'Webhook validation failed');
+      throw new ValidationError(
+        'Webhook イベントの検証に失敗しました',
+        eventResult.error.issues.map((issue) => ({
+          path: issue.path.join('.'),
+          message: issue.message,
+        }))
+      );
+    }
+
+    // Cast to LarkWebhookEvent (types are compatible after validation)
+    const event = eventResult.data as LarkWebhookEvent;
 
     // Verify webhook (if token is configured)
     if (!verifyWebhook(event)) {
-      return new Response('Unauthorized', { status: 401 });
+      throw new LarkWebhookError();
     }
 
     // Handle URL verification challenge
@@ -31,7 +64,20 @@ export async function POST(request: Request): Promise<Response> {
       return new Response('No valid message', { status: 400 });
     }
 
-    const { userId, chatId, content, parentMessageId, rootMessageId } = messageData;
+    const { userId, chatId, content: rawContent, parentMessageId, rootMessageId } = messageData;
+
+    // Validate and sanitize user content
+    const contentResult = UserMessageSchema.safeParse(rawContent);
+    if (!contentResult.success) {
+      throw new ValidationError(
+        'メッセージの検証に失敗しました',
+        contentResult.error.issues.map((issue) => ({
+          path: 'content',
+          message: issue.message,
+        }))
+      );
+    }
+    const content = contentResult.data;
 
     // Handle help/welcome message
     if (content.match(/^(help|ヘルプ|使い方|about|about)$/i)) {
@@ -42,9 +88,9 @@ export async function POST(request: Request): Promise<Response> {
     // ============================================================================
     // Handle thread replies (answers to questions)
     // ============================================================================
-    if (parentMessageId || rootMessageId) {
+    const threadId = rootMessageId || parentMessageId;
+    if (threadId) {
       // Find the questioning job for this thread
-      const threadId = rootMessageId || parentMessageId;
       const userJobs = await getUserJobs(userId, 20);
 
       const questioningJob = userJobs.find(
@@ -140,19 +186,22 @@ export async function POST(request: Request): Promise<Response> {
     // ============================================================================
 
     // Parse branch specification (e.g., "branch: feature-xxx タスク内容")
-    const branchMatch = content.match(/^branch:\s*(\S+)\s+(.+)/i);
-    let targetMessage = content;
-    let targetBranch: string | undefined;
-    let mode: 'create-pr' | 'update-branch' = 'create-pr';
-
-    if (branchMatch) {
-      targetBranch = branchMatch[1];
-      targetMessage = branchMatch[2];
-      mode = 'update-branch';
-    }
+    const branchSpec = BranchSpecificationSchema.parse(content);
+    const targetMessage = branchSpec.message;
+    const targetBranch = branchSpec.branch;
+    const mode = branchSpec.mode;
 
     // Default repo URL (can be configured via env or user settings)
     const defaultRepoUrl = process.env.DEFAULT_REPO_URL || 'https://github.com/shoma-endo/lark-bot-agent';
+
+    // Validate repo URL
+    const repoUrlResult = GitHubRepoUrlSchema.safeParse(defaultRepoUrl);
+    if (!repoUrlResult.success) {
+      throw new ValidationError(
+        '無効なリポジトリURLが設定されています',
+        [{ path: 'DEFAULT_REPO_URL', message: repoUrlResult.error.issues[0]?.message || 'Invalid URL' }]
+      );
+    }
 
     // Parse repo URL to get owner and repo for fetching files
     const repoMatch = defaultRepoUrl.match(/github\.com\/([^/]+)\/([^/]+)/);
@@ -165,7 +214,7 @@ export async function POST(request: Request): Promise<Response> {
       try {
         existingFiles = await getRepositoryFiles(owner, repo, targetBranch || 'main', 10);
       } catch (e) {
-        console.error('Failed to fetch repository files:', e);
+        log.warn({ error: e, owner, repo }, 'Failed to fetch repository files');
       }
     }
 
@@ -225,9 +274,23 @@ export async function POST(request: Request): Promise<Response> {
     // Send processing card to the chat
     await sendCard(chatId, createProcessingCard(job));
 
+    log.info({ jobId: job.id }, 'Job created successfully');
+    timer.end({ jobId: job.id, status: 'created' });
     return new Response('Job created', { status: 200 });
   } catch (error) {
-    console.error('Webhook error:', error);
+    // Log error with context
+    if (error instanceof Error) {
+      logError(log, error, { requestId });
+    }
+
+    // Handle known error types
+    if (error instanceof AppError) {
+      timer.endWithLevel('warn', { error: error.code });
+      return Response.json(formatErrorResponse(error), { status: error.statusCode });
+    }
+
+    // Unknown error
+    timer.endWithLevel('error', { error: 'unknown' });
     return new Response('Internal Server Error', { status: 500 });
   }
 }

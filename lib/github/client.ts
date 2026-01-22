@@ -1,10 +1,66 @@
 import { Octokit } from 'octokit';
 import type { CodeGenerationResponse } from '@/types';
+import {
+  GitHubApiError,
+  InvalidRepoUrlError,
+  BranchNotFoundError,
+  MergeConflictError,
+  RateLimitError,
+} from '@/lib/errors';
+import { GitHubRepoUrlSchema, BranchNameSchema, FilePathSchema } from '@/lib/validation/schemas';
+import {
+  updateGitHubRateLimit,
+  checkGitHubRateLimit,
+  getGitHubRateLimitState,
+} from '@/lib/rate-limit';
 
-// Initialize GitHub client
+// Initialize GitHub client with rate limit tracking
 const octokit = new Octokit({
   auth: process.env.GITHUB_TOKEN,
 });
+
+// Hook to track rate limits from response headers
+octokit.hook.after('request', async (response) => {
+  if (response.headers) {
+    // Convert Octokit headers to standard Headers format
+    const headers = new Headers();
+    const rateLimitRemaining = response.headers['x-ratelimit-remaining'];
+    const rateLimitLimit = response.headers['x-ratelimit-limit'];
+    const rateLimitReset = response.headers['x-ratelimit-reset'];
+
+    if (rateLimitRemaining) headers.set('x-ratelimit-remaining', String(rateLimitRemaining));
+    if (rateLimitLimit) headers.set('x-ratelimit-limit', String(rateLimitLimit));
+    if (rateLimitReset) headers.set('x-ratelimit-reset', String(rateLimitReset));
+
+    updateGitHubRateLimit(headers);
+  }
+});
+
+// Hook to check for rate limit errors
+octokit.hook.error('request', async (error) => {
+  // Check if error has status property (RequestError from Octokit)
+  const status = 'status' in error ? (error as { status: number }).status : undefined;
+  if (status === 403 || status === 429) {
+    const response = 'response' in error ? (error as { response?: { headers?: Record<string, string> } }).response : undefined;
+    const retryAfter = response?.headers?.['retry-after'];
+    throw new RateLimitError('github', retryAfter ? parseInt(retryAfter, 10) : undefined);
+  }
+  throw error;
+});
+
+/**
+ * Check GitHub rate limit before making requests
+ */
+export function ensureGitHubRateLimit(): void {
+  checkGitHubRateLimit();
+}
+
+/**
+ * Get current GitHub rate limit info
+ */
+export function getGitHubRateLimit() {
+  return getGitHubRateLimitState();
+}
 
 // ============================================================================
 // Repository Parsing
@@ -16,6 +72,12 @@ export interface RepoInfo {
 }
 
 export function parseRepoUrl(repoUrl: string): RepoInfo {
+  // Validate URL format first
+  const validationResult = GitHubRepoUrlSchema.safeParse(repoUrl);
+  if (!validationResult.success) {
+    throw new InvalidRepoUrlError(repoUrl);
+  }
+
   // Handle various GitHub URL formats
   // https://github.com/owner/repo
   // git@github.com:owner/repo.git
@@ -26,7 +88,7 @@ export function parseRepoUrl(repoUrl: string): RepoInfo {
     repoUrl.match(/github\.com[/:]([^/]+)\/([^/]+)/);
 
   if (!match) {
-    throw new Error(`Invalid GitHub repository URL: ${repoUrl}`);
+    throw new InvalidRepoUrlError(repoUrl);
   }
 
   return { owner: match[1], repo: match[2].replace('.git', '') };
@@ -42,20 +104,44 @@ export async function createBranch(
   branchName: string,
   baseBranch = 'main'
 ): Promise<void> {
-  // Get the base branch reference
-  const { data: baseRef } = await octokit.rest.git.getRef({
-    owner,
-    repo,
-    ref: `heads/${baseBranch}`,
-  });
+  // Validate branch names
+  const branchValidation = BranchNameSchema.safeParse(branchName);
+  if (!branchValidation.success) {
+    throw new GitHubApiError(
+      `無効なブランチ名: ${branchValidation.error.issues[0]?.message}`,
+      'createBranch',
+      { branchName }
+    );
+  }
 
-  // Create the new branch
-  await octokit.rest.git.createRef({
-    owner,
-    repo,
-    ref: `refs/heads/${branchName}`,
-    sha: baseRef.object.sha,
-  });
+  try {
+    // Get the base branch reference
+    const { data: baseRef } = await octokit.rest.git.getRef({
+      owner,
+      repo,
+      ref: `heads/${baseBranch}`,
+    });
+
+    // Create the new branch
+    await octokit.rest.git.createRef({
+      owner,
+      repo,
+      ref: `refs/heads/${branchName}`,
+      sha: baseRef.object.sha,
+    });
+  } catch (error) {
+    if (error instanceof GitHubApiError) throw error;
+
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('Reference does not exist')) {
+      throw new BranchNotFoundError(baseBranch, `${owner}/${repo}`);
+    }
+    throw new GitHubApiError(
+      `ブランチの作成に失敗しました: ${message}`,
+      'createBranch',
+      { owner, repo, branchName, baseBranch }
+    );
+  }
 }
 
 export async function branchExists(
@@ -120,6 +206,18 @@ export async function createOrUpdateFiles(
   files: Array<{ path: string; content: string }>,
   commitMessage: string
 ): Promise<void> {
+  // Validate all file paths first
+  for (const file of files) {
+    const pathValidation = FilePathSchema.safeParse(file.path);
+    if (!pathValidation.success) {
+      throw new GitHubApiError(
+        `無効なファイルパス "${file.path}": ${pathValidation.error.issues[0]?.message}`,
+        'createOrUpdateFiles',
+        { path: file.path }
+      );
+    }
+  }
+
   // Get the latest commit SHA of the branch
   const { data: ref } = await octokit.rest.git.getRef({
     owner,
@@ -319,9 +417,7 @@ export async function applyCodeChanges(
       ref: `heads/${branchName}`,
     });
 
-    throw new Error(
-      `Merge conflicts detected. Conflicting files: ${conflictCheck.conflictingFiles?.join(', ') || 'unknown'}`
-    );
+    throw new MergeConflictError(conflictCheck.conflictingFiles);
   }
 
   // Create pull request
@@ -353,10 +449,20 @@ export async function updateExistingBranch(
 ): Promise<{ prUrl?: string; branch: string; summary: string; commits: number }> {
   const { owner, repo } = parseRepoUrl(repoUrl);
 
+  // Validate branch name
+  const branchValidation = BranchNameSchema.safeParse(targetBranchName);
+  if (!branchValidation.success) {
+    throw new GitHubApiError(
+      `無効なブランチ名: ${branchValidation.error.issues[0]?.message}`,
+      'updateExistingBranch',
+      { targetBranchName }
+    );
+  }
+
   // Check if the target branch exists
-  const branchExists_result = await checkBranchExists(owner, repo, targetBranchName);
+  const branchExists_result = await branchExists(owner, repo, targetBranchName);
   if (!branchExists_result) {
-    throw new Error(`Branch '${targetBranchName}' does not exist. Use 'create-pr' mode for new branches.`);
+    throw new BranchNotFoundError(targetBranchName, `${owner}/${repo}`);
   }
 
   // Get the latest commit SHA of the target branch

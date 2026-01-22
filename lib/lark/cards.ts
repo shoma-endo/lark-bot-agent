@@ -51,6 +51,43 @@ export function createCompletedCard(job: Job): LarkCard {
 
   const hasPR = !!job.result.prUrl;
 
+  const elements: LarkCardElement[] = [
+    {
+      tag: 'div',
+      text: {
+        tag: 'lark_md',
+        content: `${modeText}\n\n**変更内容:**\n${job.result.summary}${
+          hasPR ? `\n\n**PR:** ${job.result.prUrl}` : '\n\n**ブランチ:** コミット完了'
+        }`,
+      },
+    },
+  ];
+
+  if (hasPR) {
+    elements.push({
+      tag: 'action',
+      actions: [
+        {
+          tag: 'button',
+          text: { tag: 'plain_text', content: '🔗 PRを確認' },
+          type: 'primary',
+          url: job.result.prUrl,
+        },
+      ],
+    });
+  }
+
+  elements.push({
+    tag: 'action',
+    actions: [
+      {
+        tag: 'button',
+        text: { tag: 'plain_text', content: '🔄 再実行' },
+        value: { type: 'retry', job_id: job.id },
+      },
+    ],
+  });
+
   return {
     msg_type: 'interactive',
     card: {
@@ -58,38 +95,7 @@ export function createCompletedCard(job: Job): LarkCard {
         title: { tag: 'plain_text', content: '✅ タスク完了' },
         template: 'green',
       },
-      elements: [
-        {
-          tag: 'div',
-          text: {
-            tag: 'lark_md',
-            content: `${modeText}\n\n**変更内容:**\n${job.result.summary}${
-              hasPR ? `\n\n**PR:** ${job.result.prUrl}` : '\n\n**ブランチ:** コミット完了'
-            }`,
-          },
-        },
-        hasPR ? {
-          tag: 'action',
-          actions: [
-            {
-              tag: 'button',
-              text: { tag: 'plain_text', content: '🔗 PRを確認' },
-              type: 'primary',
-              url: job.result.prUrl,
-            },
-          ],
-        } : null,
-        {
-          tag: 'action',
-          actions: [
-            {
-              tag: 'button',
-              text: { tag: 'plain_text', content: '🔄 再実行' },
-              value: { type: 'retry', job_id: job.id },
-            },
-          ],
-        },
-      ].filter((el): el is LarkCardElement => el !== null),
+      elements,
     },
   };
 }

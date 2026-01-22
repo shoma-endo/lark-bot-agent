@@ -4,9 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "vercel dev",
-    "build": "tsc",
+    "build": "./node_modules/.bin/tsc",
     "start": "vercel deploy",
-    "type-check": "tsc --noEmit",
+    "type-check": "./node_modules/.bin/tsc --noEmit",
     "test": "vitest",
     "test:coverage": "vitest --coverage"
   },
@@ -14,11 +14,13 @@
     "@larksuiteoapi/node-sdk": "^1.35.0",
     "@vercel/kv": "^2.0.0",
     "ai": "^4.1.1",
-    "octokit": "^4.0.2"
+    "octokit": "^4.0.2",
+    "pino": "^9.6.0",
+    "typescript": "^5.7.2",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
-    "typescript": "^5.7.2",
     "vercel": "^39.2.2",
     "vitest": "^2.1.8",
     "@vitest/coverage-v8": "^2.1.8"
